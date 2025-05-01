@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>YOLOv8 tinygrad WebGPU</title>
     <script type="module">
         import yolov8 from "./net.js"
@@ -15,6 +15,7 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
+            touch-action: none;
         }
 
         .video-container {
@@ -25,6 +26,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            background-color: #000;
         }
 
         #video, #canvas {
@@ -32,7 +34,8 @@
             top: 0;
             left: 0;
             width: 100%;
-            height: auto;
+            height: 100%;
+            object-fit: cover;
         }
 
         .loader {
@@ -71,6 +74,63 @@
             z-index: 10;
         }
 
+        #camera-status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            font-size: 18px;
+            border-radius: 5px;
+            z-index: 10;
+            display: none;
+        }
+
+        #switch-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background-color: rgba(255,255,255,0.3);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 20px;
+            z-index: 100;
+            display: none;
+        }
+
+        #error-message {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0,0,0,0.8);
+            padding: 20px;
+            text-align: center;
+            display: none;
+            z-index: 200;
+        }
+
+        #retry-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+
         h1 {
             margin-top: 20px;
         }
@@ -103,6 +163,12 @@
         <video id="video" muted autoplay playsinline></video>
         <canvas id="canvas"></canvas>
         <div id="fps-meter"></div>
+        <div id="camera-status"></div>
+        <div id="error-message">
+            <div id="error-text"></div>
+            <button id="retry-btn">Try Again</button>
+        </div>
+        <button id="switch-btn" title="Switch camera">↻</button>
 
         <div id="div-loading" class="loading-container">
             <p class="loading-text">Loading model</p>
@@ -110,90 +176,146 @@
         </div>
     </div>
     <script>
-        console.log("User agent:", navigator.userAgent);
-        
         let net = null;
         const modelInputSize = 640;
         let lastCalledTime;
         let fps = 0, accumFps = 0, frameCounter = 0;
-        let isAndroid = /Android/i.test(navigator.userAgent);
+        let currentStream = null;
+        let currentCamera = 'environment'; // Start with rear camera
 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
         const offscreenCanvas = document.createElement('canvas');
         const fpsMeter = document.getElementById('fps-meter');
+        const cameraStatus = document.getElementById('camera-status');
         const loadingContainer = document.getElementById('div-loading');
         const wgpuError = document.getElementById('wgpu-error');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        const retryBtn = document.getElementById('retry-btn');
+        const switchBtn = document.getElementById('switch-btn');
         offscreenCanvas.width = modelInputSize;
         offscreenCanvas.height = modelInputSize;
         const offscreenContext = offscreenCanvas.getContext('2d');
 
-        // WebGPU availability check
-        if (!navigator.gpu) {
-            wgpuError.style.display = "block";
-            loadingContainer.style.display = "none";
-            throw new Error("WebGPU not supported");
+        // Function to stop the current stream
+        function stopCurrentStream() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
         }
 
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ 
-                audio: false,  
-                video: { 
-                    facingMode: { ideal: "environment" },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            }).then(function(stream) {
-                video.srcObject = stream;
+        // Function to start camera with specified facing mode
+        async function startCamera(facingMode) {
+            try {
+                // Stop any existing stream
+                stopCurrentStream();
                 
-                // Android-specific handling
-                if (isAndroid) {
-                    video.style.transform = 'rotate(90deg)';
-                    video.style.width = '100%';
-                    video.style.height = 'auto';
-                }
-                
-                video.onloadedmetadata = function() {
-                    canvas.width = video.clientWidth;
-                    canvas.height = video.clientHeight;
-                    
-                    // Ensure video plays on Android
-                    video.play().catch(e => {
-                        console.error("Video play error:", e);
-                        // Fallback to user interaction
-                        document.body.addEventListener('click', () => video.play(), { once: true });
+                cameraStatus.textContent = facingMode === 'environment' 
+                    ? 'Starting rear camera...' 
+                    : 'Starting front camera...';
+                cameraStatus.style.display = 'block';
+                errorMessage.style.display = 'none';
+
+                const constraints = {
+                    video: {
+                        facingMode: { ideal: facingMode },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints)
+                    .catch(async () => {
+                        // If ideal fails, try with exact
+                        return await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                facingMode: { exact: facingMode },
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        });
+                    })
+                    .catch(async () => {
+                        // If all else fails, try any camera
+                        return await navigator.mediaDevices.getUserMedia({ video: true });
                     });
-                };
+
+                currentStream = stream;
+                video.srcObject = stream;
+                currentCamera = facingMode;
+                switchBtn.style.display = 'block';
+                cameraStatus.textContent = facingMode === 'environment' 
+                    ? 'Rear camera active' 
+                    : 'Front camera active';
                 
-                video.onerror = function(e) {
-                    console.error("Video error:", e);
+                // Hide status after 3 seconds
+                setTimeout(() => {
+                    cameraStatus.style.display = 'none';
+                }, 3000);
+
+                // Start processing frames once video is ready
+                video.onloadedmetadata = function() {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    requestAnimationFrame(processFrame);
                 };
-            }).catch(function(error) {
-                console.error("getUserMedia error:", error);
-                alert("Camera access error: " + error.message);
-            });
-        } else {
-            alert("Camera access not supported");
+
+            } catch (err) {
+                showError(`Could not start camera: ${err.message}`);
+                console.error('Camera error:', err);
+            }
         }
+
+        // Switch between cameras
+        async function switchCamera() {
+            const newMode = currentCamera === 'environment' ? 'user' : 'environment';
+            await startCamera(newMode);
+        }
+
+        // Show error message
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.style.display = 'flex';
+            cameraStatus.style.display = 'none';
+            switchBtn.style.display = 'none';
+        }
+
+        // Event listeners
+        switchBtn.addEventListener('click', switchCamera);
+        retryBtn.addEventListener('click', () => startCamera(currentCamera));
+
+        // Initialize camera when page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError('Camera access is not supported by your browser');
+                return;
+            }
+
+            // Request camera permissions first
+            try {
+                await startCamera('environment');
+            } catch (err) {
+                showError('Please allow camera access to use this feature');
+            }
+        });
+
+        // Handle orientation changes
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                if (currentStream) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                }
+            }, 300);
+        });
 
         async function processFrame() {
-            // More robust dimension checking for Android
-            if (!video.srcObject || video.readyState < HTMLMediaElement.HAVE_METADATA) {
-                // Try to get dimensions from stream if metadata not available
-                if (video.srcObject && video.srcObject.getVideoTracks().length > 0) {
-                    const settings = video.srcObject.getVideoTracks()[0].getSettings();
-                    if (settings.width && settings.height) {
-                        video.videoWidth = settings.width;
-                        video.videoHeight = settings.height;
-                    } else {
-                        setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 200 : 16);
-                        return;
-                    }
-                } else {
-                    setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 200 : 16);
-                    return;
-                }
+            if (video.videoWidth == 0 || video.videoHeight == 0) {
+                requestAnimationFrame(processFrame);
+                return;
             }
 
             if (!lastCalledTime) {
@@ -236,11 +358,6 @@
             requestAnimationFrame(processFrame);
         }
 
-        // Start processing after slight delay for Android
-        setTimeout(() => {
-            requestAnimationFrame(processFrame);
-        }, isAndroid ? 500 : 0);
-
         function drawBoxes(offscreenCanvas, boxes, targetWidth, targetHeight, offsetX, offsetY) {
             const ctx = document.querySelector("canvas").getContext("2d");
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -270,20 +387,13 @@
 
         async function detectObjectsOnFrame(offscreenContext) {
             if (!net) {
-                try {
-                    const device = await getDevice();
-                    if (!device) {
-                        wgpuError.style.display = "block";
-                        loadingContainer.style.display = "none";
-                        throw new Error("WebGPU device not available");
-                    }
-                    net = await yolov8.load(device, "./net.safetensors");
+                let device = await getDevice();
+                if (!device) {
+                    wgpuError.style.display = "block";
                     loadingContainer.style.display = "none";
-                } catch (e) {
-                    console.error("Model loading error:", e);
-                    loadingContainer.querySelector('.loading-text').textContent = "Error loading model";
-                    throw e;
                 }
+                net = await yolov8.load(device, "./net.safetensors");
+                loadingContainer.style.display = "none";
             }
             const input = await prepareInput(offscreenContext);
             const output = await net(new Float32Array(input));
@@ -309,19 +419,13 @@
         const getDevice = async () => {
             if (!navigator.gpu) return false;
             const adapter = await navigator.gpu.requestAdapter();
-            if (!adapter) return false;
-            
-            try {
-                return await adapter.requestDevice({
-                    requiredFeatures: ["shader-f16"],
-                    powerPreference: "high-performance"
-                });
-            } catch (e) {
-                console.error("WebGPU device request failed:", e);
-                return false;
-            }
+            return await adapter.requestDevice({
+                requiredFeatures: ["shader-f16"],
+                powerPreference: "high-performance"
+            });
         };
         
+
         const yolo_classes = [
             'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
             'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse',
