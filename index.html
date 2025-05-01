@@ -128,13 +128,29 @@
 
 
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ audio: false,  video: { facingMode: { ideal: "environment" }}}).then(function (stream) {
-                video.srcObject = stream;
-                video.onloadedmetadata = function() {
-                    canvas.width = video.clientWidth;
-                    canvas.height = video.clientHeight;
-                }
-            });
+            navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } })
+                .then(function (stream) {
+                    video.srcObject = stream;
+                    video.onloadedmetadata = function () {
+                        canvas.width = video.clientWidth;
+                        canvas.height = video.clientHeight;
+                    };
+                })
+                .catch(function () {
+                    alert("trying front camera");
+                    // Retry with front-facing camera if rear fails
+                    navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "user" } } })
+                        .then(function (stream) {
+                            video.srcObject = stream;
+                            video.onloadedmetadata = function () {
+                                canvas.width = video.clientWidth;
+                                canvas.height = video.clientHeight;
+                            };
+                        })
+                        .catch(function (err) {
+                            console.error("Failed to access any camera:", err);
+                        });
+                });
         }
 
         async function processFrame() {
