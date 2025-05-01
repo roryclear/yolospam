@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Camera Feed</title>
+    <title>Rear Camera Feed</title>
     <style>
         body {
             margin: 0;
@@ -16,6 +16,7 @@
             width: 100%;
             height: 100vh;
             object-fit: cover;
+            transform: scaleX(-1); /* Flip to correct mirror effect */
         }
         #status {
             position: fixed;
@@ -27,6 +28,7 @@
             font-family: Arial, sans-serif;
             background-color: rgba(0,0,0,0.5);
             padding: 10px;
+            z-index: 100;
         }
         #error {
             position: fixed;
@@ -43,77 +45,154 @@
             padding: 20px;
             text-align: center;
             display: none;
+            z-index: 200;
+        }
+        #switch-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            background-color: rgba(255,255,255,0.3);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 16px;
+            z-index: 100;
         }
     </style>
 </head>
 <body>
     <video id="video" autoplay playsinline></video>
-    <div id="status">Loading camera...</div>
+    <div id="status">Starting rear camera...</div>
     <div id="error"></div>
+    <button id="switch-btn" style="display:none;">↻</button>
 
     <script>
         const video = document.getElementById('video');
         const status = document.getElementById('status');
         const errorDiv = document.getElementById('error');
+        const switchBtn = document.getElementById('switch-btn');
 
-        // Function to handle camera start
-        async function startCamera() {
+        let currentStream = null;
+        let usingRearCamera = false;
+
+        // Function to stop the current stream
+        function stopCurrentStream() {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+                currentStream = null;
+            }
+        }
+
+        // Function to start the rear camera
+        async function startRearCamera() {
+            status.textContent = 'Starting rear camera...';
+            status.style.display = 'block';
+            errorDiv.style.display = 'none';
+            
             try {
-                // First try with ideal constraints
-                let stream = await startCameraWithConstraints({
+                // Stop any existing stream
+                stopCurrentStream();
+
+                // Try different methods to get rear camera
+                const constraints = {
                     video: {
-                        facingMode: { ideal: 'environment' },
+                        facingMode: { exact: 'environment' }, // Most strict
                         width: { ideal: 1920 },
                         height: { ideal: 1080 }
                     }
-                });
-                
-                // If that fails, try with more basic constraints
-                if (!stream) {
-                    stream = await startCameraWithConstraints({
-                        video: {
-                            facingMode: 'environment'
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints)
+                    .catch(async () => {
+                        // If exact fails, try with ideal
+                        return await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                facingMode: 'environment',
+                                width: { ideal: 1920 },
+                                height: { ideal: 1080 }
+                            }
+                        });
+                    })
+                    .catch(async () => {
+                        // If all else fails, try any camera but check if it's rear
+                        const devices = await navigator.mediaDevices.enumerateDevices();
+                        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                        
+                        // Try to find a rear camera by label
+                        const rearDevice = videoDevices.find(device => 
+                            device.label.toLowerCase().includes('back') || 
+                            device.label.toLowerCase().includes('rear') ||
+                            device.label.toLowerCase().includes('environment')
+                        );
+
+                        if (rearDevice) {
+                            return await navigator.mediaDevices.getUserMedia({
+                                video: {
+                                    deviceId: { exact: rearDevice.deviceId },
+                                    width: { ideal: 1920 },
+                                    height: { ideal: 1080 }
+                                }
+                            });
                         }
+                        return null;
                     });
-                }
-                
-                // If still fails, try with any camera
-                if (!stream) {
-                    stream = await startCameraWithConstraints({
-                        video: true
-                    });
-                }
-                
+
                 if (stream) {
+                    currentStream = stream;
                     video.srcObject = stream;
-                    status.textContent = 'Camera active (rear-facing)';
-                    status.style.display = 'none';
+                    usingRearCamera = true;
+                    status.textContent = 'Rear camera active';
+                    switchBtn.style.display = 'block';
                     
                     // Hide status after 3 seconds
                     setTimeout(() => {
                         status.style.display = 'none';
                     }, 3000);
                 } else {
-                    showError('Could not access any camera. Please check permissions.');
+                    showError('Could not find rear camera. Trying front camera...');
+                    await startFrontCamera();
                 }
             } catch (err) {
-                showError('Camera error: ' + err.message);
+                showError('Error accessing rear camera: ' + err.message);
                 console.error('Camera error:', err);
             }
         }
 
-        // Helper function to start camera with specific constraints
-        function startCameraWithConstraints(constraints) {
-            return new Promise((resolve) => {
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                    resolve(null);
-                    return;
-                }
+        // Function to start front camera
+        async function startFrontCamera() {
+            try {
+                stopCurrentStream();
                 
-                navigator.mediaDevices.getUserMedia(constraints)
-                    .then(stream => resolve(stream))
-                    .catch(() => resolve(null));
-            });
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                });
+
+                currentStream = stream;
+                video.srcObject = stream;
+                usingRearCamera = false;
+                status.textContent = 'Front camera active';
+                switchBtn.style.display = 'block';
+                
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 3000);
+            } catch (err) {
+                showError('Error accessing front camera: ' + err.message);
+            }
+        }
+
+        // Switch between cameras
+        async function switchCamera() {
+            if (usingRearCamera) {
+                await startFrontCamera();
+            } else {
+                await startRearCamera();
+            }
         }
 
         // Show error message
@@ -121,22 +200,28 @@
             errorDiv.textContent = message;
             errorDiv.style.display = 'flex';
             status.style.display = 'none';
+            switchBtn.style.display = 'none';
         }
+
+        // Event listeners
+        switchBtn.addEventListener('click', switchCamera);
 
         // Start camera when page loads
         document.addEventListener('DOMContentLoaded', () => {
             // Add a slight delay to ensure DOM is ready
-            setTimeout(startCamera, 100);
+            setTimeout(startRearCamera, 100);
         });
 
         // Handle orientation changes
         window.addEventListener('orientationchange', () => {
             // Add slight delay to allow orientation to settle
             setTimeout(() => {
-                if (video.srcObject) {
-                    // Restart camera on orientation change
-                    video.srcObject.getTracks().forEach(track => track.stop());
-                    startCamera();
+                if (currentStream) {
+                    if (usingRearCamera) {
+                        startRearCamera();
+                    } else {
+                        startFrontCamera();
+                    }
                 }
             }, 300);
         });
