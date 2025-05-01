@@ -136,7 +136,7 @@
                     canvas.height = video.clientHeight;
                 };
             };
-            tryCamera("environment").then(handle).catch(() => tryCamera("user").then(handle).catch(e => console.error("No camera:", e)));
+            tryCamera("user").then(handle).catch(() => tryCamera("user").then(handle).catch(e => console.error("No camera:", e)));
         }
 
         async function processFrame() {
