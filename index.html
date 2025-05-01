@@ -181,7 +181,7 @@
         let lastCalledTime;
         let fps = 0, accumFps = 0, frameCounter = 0;
         let currentStream = null;
-        let currentCamera = 'environment'; // Start with rear camera
+        let currentCamera = 'user';
 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
@@ -210,7 +210,6 @@
         // Function to start camera with specified facing mode
         async function startCamera(facingMode) {
             try {
-                // Stop any existing stream
                 stopCurrentStream();
                 
                 cameraStatus.textContent = facingMode === 'environment' 
@@ -219,6 +218,7 @@
                 cameraStatus.style.display = 'block';
                 errorMessage.style.display = 'none';
 
+                // Try front camera first (user) then fall back to environment (rear)
                 const constraints = {
                     video: {
                         facingMode: { ideal: facingMode },
@@ -239,7 +239,7 @@
                         });
                     })
                     .catch(async () => {
-                        // If all else fails, try any camera
+                        // If specific camera fails, try any camera
                         return await navigator.mediaDevices.getUserMedia({ video: true });
                     });
 
@@ -247,16 +247,20 @@
                 video.srcObject = stream;
                 currentCamera = facingMode;
                 switchBtn.style.display = 'block';
-                cameraStatus.textContent = facingMode === 'environment' 
+                
+                // Update status message based on which camera we actually got
+                const tracks = stream.getVideoTracks();
+                const settings = tracks[0].getSettings();
+                const actualFacingMode = settings.facingMode || (facingMode === 'user' ? 'user' : 'environment');
+                
+                cameraStatus.textContent = actualFacingMode === 'environment' 
                     ? 'Rear camera active' 
                     : 'Front camera active';
                 
-                // Hide status after 3 seconds
                 setTimeout(() => {
                     cameraStatus.style.display = 'none';
                 }, 3000);
 
-                // Start processing frames once video is ready
                 video.onloadedmetadata = function() {
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
