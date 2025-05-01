@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Feed</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+        #camera-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        video {
+            max-width: 100%;
+            max-height: 80vh;
+            background-color: #000;
+        }
+        #status {
+            margin-top: 10px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="camera-container">
+        <video id="video" autoplay playsinline></video>
+        <div id="status">Loading camera...</div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const status = document.getElementById('status');
+        
+        // Check if browser supports media devices
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            // Request the camera
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'environment' // Prefer rear camera on mobile
+                } 
+            })
+            .then(function(stream) {
+                // Attach the video stream to the video element
+                video.srcObject = stream;
+                status.textContent = 'Camera is active';
+            })
+            .catch(function(error) {
+                status.textContent = 'Error accessing camera: ' + error.message;
+                console.error('Camera error:', error);
+            });
+        } else {
+            status.textContent = 'Your browser does not support camera access';
+        }
+    </script>
+</body>
+</html>
