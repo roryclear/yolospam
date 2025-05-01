@@ -403,13 +403,14 @@
             offscreenContext.drawImage(video, offsetX, offsetY, targetWidth, targetHeight);
             alert("HERE2");
             const boxes = await detectObjectsOnFrame(offscreenContext);
+            alert("HERE3");
             const validBoxes = [];
             for (let i = 0; i < boxes.length; i += 6)
                 if (boxes[i + 4] > 0) validBoxes.push([boxes[i], boxes[i + 1], boxes[i + 2], boxes[i + 3], boxes[i + 5]]);
             drawBoxes(offscreenCanvas, validBoxes, targetWidth, targetHeight, offsetX, offsetY);
-            alert("HERE3");
-            requestAnimationFrame(processFrame);
             alert("HERE4");
+            requestAnimationFrame(processFrame);
+            alert("HERE5");
         }
 
         function drawBoxes(offscreenCanvas, boxes, targetWidth, targetHeight, offsetX, offsetY) {
