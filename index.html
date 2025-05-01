@@ -362,12 +362,10 @@
         });
 
         async function processFrame() {
-            alert("HERE0");
             if (video.videoWidth == 0 || video.videoHeight == 0) {
                 requestAnimationFrame(processFrame);
                 return;
             }
-            alert("HERE1");
 
             if (!lastCalledTime) {
                 lastCalledTime = performance.now();
@@ -401,16 +399,12 @@
             const offsetY = (modelInputSize - targetHeight) / 2;
             offscreenContext.clearRect(0, 0, modelInputSize, modelInputSize);
             offscreenContext.drawImage(video, offsetX, offsetY, targetWidth, targetHeight);
-            alert("HERE2");
             const boxes = await detectObjectsOnFrame(offscreenContext);
-            alert("HERE3");
             const validBoxes = [];
             for (let i = 0; i < boxes.length; i += 6)
                 if (boxes[i + 4] > 0) validBoxes.push([boxes[i], boxes[i + 1], boxes[i + 2], boxes[i + 3], boxes[i + 5]]);
             drawBoxes(offscreenCanvas, validBoxes, targetWidth, targetHeight, offsetX, offsetY);
-            alert("HERE4");
             requestAnimationFrame(processFrame);
-            alert("HERE5");
         }
 
         function drawBoxes(offscreenCanvas, boxes, targetWidth, targetHeight, offsetX, offsetY) {
@@ -442,16 +436,12 @@
 
         async function detectObjectsOnFrame(offscreenContext) {
             if (!net) {
-                alert("getting device");
                 let device = await getDevice();
-                alert("got device");
                 if (!device) {
                     wgpuError.style.display = "block";
                     loadingContainer.style.display = "none";
                 }
-                alert("getting net");
                 net = await yolov8.load(device, "./net.safetensors");
-                alert("got net");
                 loadingContainer.style.display = "none";
             }
             const input = await prepareInput(offscreenContext);
