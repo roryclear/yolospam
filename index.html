@@ -9,96 +9,30 @@
         window.yolov8 = yolov8;
     </script>
     <style>
-        body {
-            text-align: center;
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }
-
-        .video-container {
-            position: relative;
-            width: 100%;
-            height: 100vh;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #video, #canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: auto;
-        }
-
-        .loader {
-            width: 48px;
-            height: 48px;
-            border: 5px solid #FFF;
-            border-bottom-color: transparent;
-            border-radius: 50%;
-            display: inline-block;
-            box-sizing: border-box;
-            animation: rotation 1s linear infinite;
-        }
-
-        @keyframes rotation {
-            0% {
-                transform: rotate(0deg);
-            }
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        #canvas {
-            background: transparent;
-        }
-
-        #fps-meter {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background-color: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 10px;
-            font-size: 18px;
-            border-radius: 5px;
-            z-index: 10;
-        }
-
-        h1 {
+        /* ... (keep your existing styles) ... */
+        #camera-error {
+            display: none;
+            color: red;
             margin-top: 20px;
         }
-
-        .loading-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.6);
-            z-index: 10;
-        }
-
-        .loading-text {
-            font-size: 24px;
+        #retry-button {
+            display: none;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background: #4CAF50;
             color: white;
-            margin-bottom: 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
     <h2>YOLOv8 tinygrad WebGPU</h2>
     <h2 id="wgpu-error" style="display: none; color: red;">Error: WebGPU is not supported in this browser</h2>
+    <h2 id="camera-error" style="display: none;">Camera could not be accessed. Please try again.</h2>
+    <button id="retry-button">Retry Camera Access</button>
+    
     <div class="video-container">
         <video id="video" muted autoplay playsinline></video>
         <canvas id="canvas"></canvas>
@@ -117,6 +51,7 @@
         let lastCalledTime;
         let fps = 0, accumFps = 0, frameCounter = 0;
         let isAndroid = /Android/i.test(navigator.userAgent);
+        let cameraStream = null;
 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
@@ -125,6 +60,8 @@
         const fpsMeter = document.getElementById('fps-meter');
         const loadingContainer = document.getElementById('div-loading');
         const wgpuError = document.getElementById('wgpu-error');
+        const cameraError = document.getElementById('camera-error');
+        const retryButton = document.getElementById('retry-button');
         offscreenCanvas.width = modelInputSize;
         offscreenCanvas.height = modelInputSize;
         const offscreenContext = offscreenCanvas.getContext('2d');
@@ -136,49 +73,107 @@
             throw new Error("WebGPU not supported");
         }
 
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ 
-                audio: false,  
-                video: { 
-                    facingMode: { ideal: "environment" },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
-                }
-            }).then(function(stream) {
+        function stopCameraStream() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+        }
+
+        async function startCamera() {
+            stopCameraStream(); // Stop any existing stream
+            
+            cameraError.style.display = "none";
+            retryButton.style.display = "none";
+            loadingContainer.style.display = "flex";
+            
+            try {
+                const constraints = {
+                    audio: false,
+                    video: {
+                        facingMode: { ideal: "environment" },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+
+                // Try with preferred constraints first
+                let stream = await navigator.mediaDevices.getUserMedia(constraints)
+                    .catch(async (error) => {
+                        console.log("First attempt failed, trying fallback constraints");
+                        // Fallback to less strict constraints
+                        return await navigator.mediaDevices.getUserMedia({
+                            audio: false,
+                            video: true // Let the browser decide
+                        });
+                    });
+
+                cameraStream = stream;
                 video.srcObject = stream;
                 
                 // Android-specific handling
                 if (isAndroid) {
                     video.style.transform = 'rotate(90deg)';
                     video.style.width = '100%';
-                    video.style.height = 'auto';
+                    video.style.objectFit = 'cover';
                 }
                 
-                video.onloadedmetadata = function() {
-                    canvas.width = video.clientWidth;
-                    canvas.height = video.clientHeight;
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = function() {
+                        canvas.width = video.clientWidth;
+                        canvas.height = video.clientHeight;
+                        
+                        // Ensure video plays on Android
+                        const playPromise = video.play();
+                        
+                        if (playPromise !== undefined) {
+                            playPromise.then(() => {
+                                console.log("Video started playing");
+                                resolve();
+                            }).catch(e => {
+                                console.error("Video play failed:", e);
+                                // Fallback to user interaction
+                                document.body.addEventListener('click', () => {
+                                    video.play().then(resolve).catch(e => {
+                                        console.error("Second play attempt failed:", e);
+                                        showCameraError();
+                                    });
+                                }, { once: true });
+                            });
+                        }
+                    };
                     
-                    // Ensure video plays on Android
-                    video.play().catch(e => {
-                        console.error("Video play error:", e);
-                        // Fallback to user interaction
-                        document.body.addEventListener('click', () => video.play(), { once: true });
-                    });
-                };
-                
-                video.onerror = function(e) {
-                    console.error("Video error:", e);
-                };
-            }).catch(function(error) {
-                console.error("getUserMedia error:", error);
-                alert("Camera access error: " + error.message);
-            });
-        } else {
-            alert("Camera access not supported");
+                    video.onerror = function(e) {
+                        console.error("Video error:", e);
+                        showCameraError();
+                    };
+                    
+                    // Timeout for Android devices
+                    setTimeout(() => {
+                        if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+                            console.log("Video metadata loading timeout, proceeding anyway");
+                            resolve();
+                        }
+                    }, 2000);
+                });
+            } catch (error) {
+                console.error("Camera access error:", error);
+                showCameraError();
+                throw error;
+            }
         }
 
+        function showCameraError() {
+            stopCameraStream();
+            cameraError.style.display = "block";
+            retryButton.style.display = "block";
+            loadingContainer.style.display = "none";
+        }
+
+        retryButton.addEventListener('click', startCamera);
+
         async function processFrame() {
-            // More robust dimension checking for Android
+            // Check if we have a valid video source
             if (!video.srcObject || video.readyState < HTMLMediaElement.HAVE_METADATA) {
                 // Try to get dimensions from stream if metadata not available
                 if (video.srcObject && video.srcObject.getVideoTracks().length > 0) {
@@ -187,15 +182,16 @@
                         video.videoWidth = settings.width;
                         video.videoHeight = settings.height;
                     } else {
-                        setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 200 : 16);
+                        setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 500 : 16);
                         return;
                     }
                 } else {
-                    setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 200 : 16);
+                    setTimeout(() => requestAnimationFrame(processFrame), isAndroid ? 500 : 16);
                     return;
                 }
             }
 
+            // Rest of your processFrame implementation...
             if (!lastCalledTime) {
                 lastCalledTime = performance.now();
                 fps = 0;
@@ -235,6 +231,19 @@
             drawBoxes(offscreenCanvas, validBoxes, targetWidth, targetHeight, offsetX, offsetY);
             requestAnimationFrame(processFrame);
         }
+
+        // Initialize the app
+        async function initApp() {
+            try {
+                await startCamera();
+                requestAnimationFrame(processFrame);
+            } catch (error) {
+                console.error("Initialization error:", error);
+            }
+        }
+
+        // Start the app
+        initApp();
 
         // Start processing after slight delay for Android
         setTimeout(() => {
