@@ -127,30 +127,16 @@
         const offscreenContext = offscreenCanvas.getContext('2d');
 
 
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" } } })
-                .then(function (stream) {
-                    video.srcObject = stream;
-                    video.onloadedmetadata = function () {
-                        canvas.width = video.clientWidth;
-                        canvas.height = video.clientHeight;
-                    };
-                })
-                .catch(function () {
-                    alert("trying front camera");
-                    // Retry with front-facing camera if rear fails
-                    navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "user" } } })
-                        .then(function (stream) {
-                            video.srcObject = stream;
-                            video.onloadedmetadata = function () {
-                                canvas.width = video.clientWidth;
-                                canvas.height = video.clientHeight;
-                            };
-                        })
-                        .catch(function (err) {
-                            console.error("Failed to access any camera:", err);
-                        });
-                });
+        if (navigator.mediaDevices?.getUserMedia) {
+            const tryCamera = facing => navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: facing } } });
+            const handle = stream => {
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    canvas.width = video.clientWidth;
+                    canvas.height = video.clientHeight;
+                };
+            };
+            tryCamera("environment").then(handle).catch(() => tryCamera("user").then(handle).catch(e => console.error("No camera:", e)));
         }
 
         async function processFrame() {
