@@ -181,7 +181,7 @@
         let lastCalledTime;
         let fps = 0, accumFps = 0, frameCounter = 0;
         let currentStream = null;
-        let currentCamera = 'user';
+        let currentCamera = 'front'; // Start with front camera
 
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
@@ -207,76 +207,125 @@
             }
         }
 
-        // Function to start camera with specified facing mode
-        async function startCamera(facingMode) {
+        // Function to start camera
+        async function startCamera(cameraType) {
             try {
                 stopCurrentStream();
                 
-                cameraStatus.textContent = facingMode === 'environment' 
+                cameraStatus.textContent = cameraType === 'rear' 
                     ? 'Starting rear camera...' 
                     : 'Starting front camera...';
                 cameraStatus.style.display = 'block';
                 errorMessage.style.display = 'none';
 
-                // Try front camera first (user) then fall back to environment (rear)
-                const constraints = {
-                    video: {
-                        facingMode: { ideal: facingMode },
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    }
-                };
-
-                const stream = await navigator.mediaDevices.getUserMedia(constraints)
-                    .catch(async () => {
-                        // If ideal fails, try with exact
-                        return await navigator.mediaDevices.getUserMedia({
-                            video: {
-                                facingMode: { exact: facingMode },
-                                width: { ideal: 1280 },
-                                height: { ideal: 720 }
-                            }
-                        });
-                    })
-                    .catch(async () => {
-                        // If specific camera fails, try any camera
-                        return await navigator.mediaDevices.getUserMedia({ video: true });
-                    });
-
-                currentStream = stream;
-                video.srcObject = stream;
-                currentCamera = facingMode;
-                switchBtn.style.display = 'block';
+                // Try to get the requested camera type
+                let stream = await tryGetCamera(cameraType);
                 
-                // Update status message based on which camera we actually got
-                const tracks = stream.getVideoTracks();
-                const settings = tracks[0].getSettings();
-                const actualFacingMode = settings.facingMode || (facingMode === 'user' ? 'user' : 'environment');
-                
-                cameraStatus.textContent = actualFacingMode === 'environment' 
-                    ? 'Rear camera active' 
-                    : 'Front camera active';
-                
-                setTimeout(() => {
-                    cameraStatus.style.display = 'none';
-                }, 3000);
+                if (!stream && cameraType === 'front') {
+                    // If front camera fails, try any camera as fallback
+                    stream = await tryGetUserMedia({ video: true });
+                }
 
-                video.onloadedmetadata = function() {
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    requestAnimationFrame(processFrame);
-                };
+                if (stream) {
+                    currentStream = stream;
+                    video.srcObject = stream;
+                    currentCamera = cameraType;
+                    switchBtn.style.display = 'block';
+                    
+                    // Determine which camera we actually got
+                    const actualCamera = await detectActiveCamera();
+                    cameraStatus.textContent = actualCamera === 'rear' 
+                        ? 'Rear camera active' 
+                        : 'Front camera active';
+                    
+                    setTimeout(() => {
+                        cameraStatus.style.display = 'none';
+                    }, 3000);
 
+                    video.onloadedmetadata = function() {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        requestAnimationFrame(processFrame);
+                    };
+                } else {
+                    throw new Error('Could not access camera');
+                }
             } catch (err) {
                 showError(`Could not start camera: ${err.message}`);
                 console.error('Camera error:', err);
             }
         }
 
+        // Try to get specific camera type
+        async function tryGetCamera(cameraType) {
+            // First try with device enumeration if possible
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+            
+            if (videoDevices.length > 1) {
+                // Try to find camera by label
+                const targetLabels = cameraType === 'front' 
+                    ? ['front', 'face'] 
+                    : ['back', 'rear', 'environment'];
+                
+                for (const device of videoDevices) {
+                    const label = device.label.toLowerCase();
+                    if (targetLabels.some(target => label.includes(target))) {
+                        const stream = await tryGetUserMedia({
+                            video: {
+                                deviceId: { exact: device.deviceId },
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            }
+                        });
+                        if (stream) return stream;
+                    }
+                }
+            }
+            
+            // Fall back to facingMode constraints
+            return await tryGetUserMedia({
+                video: {
+                    facingMode: cameraType === 'rear' ? 'environment' : 'user',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            });
+        }
+
+        // Detect which camera is actually being used
+        async function detectActiveCamera() {
+            if (!currentStream) return 'front';
+            const tracks = currentStream.getVideoTracks();
+            if (tracks.length === 0) return 'front';
+            
+            try {
+                const settings = tracks[0].getSettings();
+                if (settings.facingMode) {
+                    return settings.facingMode === 'environment' ? 'rear' : 'front';
+                }
+                
+                // For devices that don't report facingMode
+                return currentCamera; // Return our intended camera
+            } catch {
+                return 'front';
+            }
+        }
+
+        // Helper function to try getUserMedia with error handling
+        async function tryGetUserMedia(constraints) {
+            try {
+                return await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (err) {
+                console.warn('Failed with constraints:', constraints, err);
+                return null;
+            }
+        }
+
         // Switch between cameras
         async function switchCamera() {
-            const newMode = currentCamera === 'environment' ? 'user' : 'environment';
-            await startCamera(newMode);
+            const newCamera = currentCamera === 'rear' ? 'front' : 'rear';
+            await startCamera(newCamera);
         }
 
         // Show error message
@@ -287,10 +336,6 @@
             switchBtn.style.display = 'none';
         }
 
-        // Event listeners
-        switchBtn.addEventListener('click', switchCamera);
-        retryBtn.addEventListener('click', () => startCamera(currentCamera));
-
         // Initialize camera when page loads
         document.addEventListener('DOMContentLoaded', async () => {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -300,7 +345,7 @@
 
             // Request camera permissions first
             try {
-                await startCamera('environment');
+                await startCamera('front');
             } catch (err) {
                 showError('Please allow camera access to use this feature');
             }
@@ -429,7 +474,6 @@
             });
         };
         
-
         const yolo_classes = [
             'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
             'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse',
