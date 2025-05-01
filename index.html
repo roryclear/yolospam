@@ -474,7 +474,8 @@
                 resolve(input)
             })
         }
-
+        
+        /*
         const getDevice = async () => {
             if (!navigator.gpu) return false;
             const adapter = await navigator.gpu.requestAdapter();
@@ -482,6 +483,13 @@
                 requiredFeatures: ["shader-f16"],
                 powerPreference: "high-performance"
             });
+        };
+        */
+
+        const getDevice = async () => {
+            if (!navigator.gpu) return false;
+            const adapter = await navigator.gpu.requestAdapter();
+            return await adapter.requestDevice();
         };
         
         const yolo_classes = [
