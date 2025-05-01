@@ -2,65 +2,144 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Camera Feed</title>
     <style>
         body {
             margin: 0;
             padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            touch-action: none;
+        }
+        #video {
+            width: 100%;
+            height: 100vh;
+            object-fit: cover;
+        }
+        #status {
+            position: fixed;
+            top: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            background-color: rgba(0,0,0,0.5);
+            padding: 10px;
+        }
+        #error {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
-            background-color: #f0f0f0;
+            color: white;
             font-family: Arial, sans-serif;
-        }
-        #camera-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        video {
-            max-width: 100%;
-            max-height: 80vh;
-            background-color: #000;
-        }
-        #status {
-            margin-top: 10px;
-            color: #333;
+            background-color: rgba(0,0,0,0.8);
+            padding: 20px;
+            text-align: center;
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div id="camera-container">
-        <video id="video" autoplay playsinline></video>
-        <div id="status">Loading camera...</div>
-    </div>
+    <video id="video" autoplay playsinline></video>
+    <div id="status">Loading camera...</div>
+    <div id="error"></div>
 
     <script>
         const video = document.getElementById('video');
         const status = document.getElementById('status');
-        
-        // Check if browser supports media devices
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            // Request the camera
-            navigator.mediaDevices.getUserMedia({ 
-                video: { 
-                    facingMode: 'environment' // Prefer rear camera on mobile
-                } 
-            })
-            .then(function(stream) {
-                // Attach the video stream to the video element
-                video.srcObject = stream;
-                status.textContent = 'Camera is active';
-            })
-            .catch(function(error) {
-                status.textContent = 'Error accessing camera: ' + error.message;
-                console.error('Camera error:', error);
-            });
-        } else {
-            status.textContent = 'Your browser does not support camera access';
+        const errorDiv = document.getElementById('error');
+
+        // Function to handle camera start
+        async function startCamera() {
+            try {
+                // First try with ideal constraints
+                let stream = await startCameraWithConstraints({
+                    video: {
+                        facingMode: { ideal: 'environment' },
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    }
+                });
+                
+                // If that fails, try with more basic constraints
+                if (!stream) {
+                    stream = await startCameraWithConstraints({
+                        video: {
+                            facingMode: 'environment'
+                        }
+                    });
+                }
+                
+                // If still fails, try with any camera
+                if (!stream) {
+                    stream = await startCameraWithConstraints({
+                        video: true
+                    });
+                }
+                
+                if (stream) {
+                    video.srcObject = stream;
+                    status.textContent = 'Camera active (rear-facing)';
+                    status.style.display = 'none';
+                    
+                    // Hide status after 3 seconds
+                    setTimeout(() => {
+                        status.style.display = 'none';
+                    }, 3000);
+                } else {
+                    showError('Could not access any camera. Please check permissions.');
+                }
+            } catch (err) {
+                showError('Camera error: ' + err.message);
+                console.error('Camera error:', err);
+            }
         }
+
+        // Helper function to start camera with specific constraints
+        function startCameraWithConstraints(constraints) {
+            return new Promise((resolve) => {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    resolve(null);
+                    return;
+                }
+                
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then(stream => resolve(stream))
+                    .catch(() => resolve(null));
+            });
+        }
+
+        // Show error message
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'flex';
+            status.style.display = 'none';
+        }
+
+        // Start camera when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            // Add a slight delay to ensure DOM is ready
+            setTimeout(startCamera, 100);
+        });
+
+        // Handle orientation changes
+        window.addEventListener('orientationchange', () => {
+            // Add slight delay to allow orientation to settle
+            setTimeout(() => {
+                if (video.srcObject) {
+                    // Restart camera on orientation change
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                    startCamera();
+                }
+            }, 300);
+        });
     </script>
 </body>
 </html>
