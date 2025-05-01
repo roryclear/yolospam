@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Rear Camera Feed</title>
+    <title>Rear Camera Viewer</title>
     <style>
         body {
             margin: 0;
@@ -16,7 +16,6 @@
             width: 100%;
             height: 100vh;
             object-fit: cover;
-            transform: scaleX(-1); /* Flip to correct mirror effect */
         }
         #status {
             position: fixed;
@@ -37,6 +36,7 @@
             right: 0;
             bottom: 0;
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             color: white;
@@ -51,30 +51,46 @@
             position: fixed;
             bottom: 20px;
             right: 20px;
-            padding: 10px 15px;
+            width: 50px;
+            height: 50px;
             background-color: rgba(255,255,255,0.3);
             color: white;
             border: none;
             border-radius: 50%;
-            font-size: 16px;
+            font-size: 20px;
             z-index: 100;
+            display: none;
+        }
+        #retry-btn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
     <video id="video" autoplay playsinline></video>
-    <div id="status">Starting rear camera...</div>
-    <div id="error"></div>
-    <button id="switch-btn" style="display:none;">↻</button>
+    <div id="status">Initializing camera...</div>
+    <div id="error">
+        <div id="error-message"></div>
+        <button id="retry-btn">Try Again</button>
+    </div>
+    <button id="switch-btn" title="Switch camera">↻</button>
 
     <script>
         const video = document.getElementById('video');
         const status = document.getElementById('status');
         const errorDiv = document.getElementById('error');
+        const errorMessage = document.getElementById('error-message');
         const switchBtn = document.getElementById('switch-btn');
+        const retryBtn = document.getElementById('retry-btn');
 
         let currentStream = null;
-        let usingRearCamera = false;
+        let currentCamera = 'environment'; // Start with rear camera
 
         // Function to stop the current stream
         function stopCurrentStream() {
@@ -84,9 +100,11 @@
             }
         }
 
-        // Function to start the rear camera
-        async function startRearCamera() {
-            status.textContent = 'Starting rear camera...';
+        // Function to start camera with specified facing mode
+        async function startCamera(facingMode) {
+            status.textContent = facingMode === 'environment' 
+                ? 'Starting rear camera...' 
+                : 'Starting front camera...';
             status.style.display = 'block';
             errorDiv.style.display = 'none';
             
@@ -94,134 +112,118 @@
                 // Stop any existing stream
                 stopCurrentStream();
 
-                // Try different methods to get rear camera
-                const constraints = {
+                // Try with ideal constraints first
+                let stream = await tryGetUserMedia({
                     video: {
-                        facingMode: { exact: 'environment' }, // Most strict
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
+                        facingMode: { ideal: facingMode },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
                     }
-                };
+                });
 
-                const stream = await navigator.mediaDevices.getUserMedia(constraints)
-                    .catch(async () => {
-                        // If exact fails, try with ideal
-                        return await navigator.mediaDevices.getUserMedia({
-                            video: {
-                                facingMode: 'environment',
-                                width: { ideal: 1920 },
-                                height: { ideal: 1080 }
-                            }
-                        });
-                    })
-                    .catch(async () => {
-                        // If all else fails, try any camera but check if it's rear
-                        const devices = await navigator.mediaDevices.enumerateDevices();
-                        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-                        
-                        // Try to find a rear camera by label
-                        const rearDevice = videoDevices.find(device => 
-                            device.label.toLowerCase().includes('back') || 
-                            device.label.toLowerCase().includes('rear') ||
-                            device.label.toLowerCase().includes('environment')
-                        );
+                // If that fails, try with exact constraints
+                if (!stream) {
+                    stream = await tryGetUserMedia({
+                        video: {
+                            facingMode: { exact: facingMode },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }
+                    });
+                }
 
-                        if (rearDevice) {
-                            return await navigator.mediaDevices.getUserMedia({
+                // If still no luck, try with device enumeration
+                if (!stream) {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                    
+                    if (videoDevices.length > 0) {
+                        // Try each video device until we find one that works
+                        for (const device of videoDevices) {
+                            stream = await tryGetUserMedia({
                                 video: {
-                                    deviceId: { exact: rearDevice.deviceId },
-                                    width: { ideal: 1920 },
-                                    height: { ideal: 1080 }
+                                    deviceId: { exact: device.deviceId },
+                                    width: { ideal: 1280 },
+                                    height: { ideal: 720 }
                                 }
                             });
+                            if (stream) break;
                         }
-                        return null;
-                    });
+                    }
+                }
 
                 if (stream) {
                     currentStream = stream;
                     video.srcObject = stream;
-                    usingRearCamera = true;
-                    status.textContent = 'Rear camera active';
+                    currentCamera = facingMode;
                     switchBtn.style.display = 'block';
+                    status.textContent = facingMode === 'environment' 
+                        ? 'Rear camera active' 
+                        : 'Front camera active';
                     
                     // Hide status after 3 seconds
                     setTimeout(() => {
                         status.style.display = 'none';
                     }, 3000);
                 } else {
-                    showError('Could not find rear camera. Trying front camera...');
-                    await startFrontCamera();
+                    throw new Error('Could not access any camera');
                 }
             } catch (err) {
-                showError('Error accessing rear camera: ' + err.message);
+                showError(`Could not start camera: ${err.message}`);
                 console.error('Camera error:', err);
             }
         }
 
-        // Function to start front camera
-        async function startFrontCamera() {
+        // Helper function to try getUserMedia with error handling
+        async function tryGetUserMedia(constraints) {
             try {
-                stopCurrentStream();
-                
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: 'user',
-                        width: { ideal: 1920 },
-                        height: { ideal: 1080 }
-                    }
-                });
-
-                currentStream = stream;
-                video.srcObject = stream;
-                usingRearCamera = false;
-                status.textContent = 'Front camera active';
-                switchBtn.style.display = 'block';
-                
-                setTimeout(() => {
-                    status.style.display = 'none';
-                }, 3000);
+                return await navigator.mediaDevices.getUserMedia(constraints);
             } catch (err) {
-                showError('Error accessing front camera: ' + err.message);
-            }
-        }
-
-        // Switch between cameras
-        async function switchCamera() {
-            if (usingRearCamera) {
-                await startFrontCamera();
-            } else {
-                await startRearCamera();
+                console.warn(`Failed with constraints:`, constraints, err);
+                return null;
             }
         }
 
         // Show error message
         function showError(message) {
-            errorDiv.textContent = message;
+            errorMessage.textContent = message;
             errorDiv.style.display = 'flex';
             status.style.display = 'none';
             switchBtn.style.display = 'none';
         }
 
+        // Switch between cameras
+        async function switchCamera() {
+            const newMode = currentCamera === 'environment' ? 'user' : 'environment';
+            await startCamera(newMode);
+        }
+
         // Event listeners
         switchBtn.addEventListener('click', switchCamera);
+        retryBtn.addEventListener('click', () => startCamera(currentCamera));
 
-        // Start camera when page loads
-        document.addEventListener('DOMContentLoaded', () => {
-            // Add a slight delay to ensure DOM is ready
-            setTimeout(startRearCamera, 100);
+        // Check for camera support when page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showError('Camera access is not supported by your browser');
+                return;
+            }
+
+            // Request camera permissions first
+            try {
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                // Now start with rear camera
+                await startCamera('environment');
+            } catch (err) {
+                showError('Please allow camera access to use this feature');
+            }
         });
 
         // Handle orientation changes
         window.addEventListener('orientationchange', () => {
-            // Add slight delay to allow orientation to settle
             setTimeout(() => {
                 if (currentStream) {
-                    if (usingRearCamera) {
-                        startRearCamera();
-                    } else {
-                        startFrontCamera();
-                    }
+                    startCamera(currentCamera);
                 }
             }, 300);
         });
