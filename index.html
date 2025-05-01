@@ -138,11 +138,12 @@
         }
 
         async function processFrame() {
+            alert("HERE0");
             if (video.videoWidth == 0 || video.videoHeight == 0) {
                 requestAnimationFrame(processFrame);
                 return;
             }
-            alert("HERE0");
+            alert("HERE1");
 
             if (!lastCalledTime) {
                 lastCalledTime = performance.now();
@@ -213,16 +214,16 @@
         }
 
         async function detectObjectsOnFrame(offscreenContext) {
-            alert("HERE1");
+            alert("HERE2");
             if (!net) {
                 let device = await getDevice();
                 if (!device) {
                     wgpuError.style.display = "block";
                     loadingContainer.style.display = "none";
                 }
-                alert("HERE2");
-                net = await yolov8.load(device, "./net.safetensors");
                 alert("HERE3");
+                net = await yolov8.load(device, "./net.safetensors");
+                alert("HERE4");
                 loadingContainer.style.display = "none";
             }
             const input = await prepareInput(offscreenContext);
