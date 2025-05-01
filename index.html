@@ -362,10 +362,12 @@
         });
 
         async function processFrame() {
+            alert("HERE0");
             if (video.videoWidth == 0 || video.videoHeight == 0) {
                 requestAnimationFrame(processFrame);
                 return;
             }
+            alert("HERE1");
 
             if (!lastCalledTime) {
                 lastCalledTime = performance.now();
