@@ -133,7 +133,6 @@
                 video.onloadedmetadata = function() {
                     canvas.width = video.clientWidth;
                     canvas.height = video.clientHeight;
-                    requestAnimationFrame(processFrame);
                 }
             });
         }
@@ -185,7 +184,7 @@
             drawBoxes(offscreenCanvas, validBoxes, targetWidth, targetHeight, offsetX, offsetY);
             requestAnimationFrame(processFrame);
         }
-        //requestAnimationFrame(processFrame);
+        requestAnimationFrame(processFrame);
 
         function drawBoxes(offscreenCanvas, boxes, targetWidth, targetHeight, offsetX, offsetY) {
             const ctx = document.querySelector("canvas").getContext("2d");
